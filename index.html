@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Candidate Selection Poll</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --card-bg: #1e1e1e;
+      --accent: #6200ee;
+      --danger: #b00020;
+      --text: #ffffff;
+      --text-muted: #aaaaaa;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 500px;
+      background: var(--card-bg);
+      padding: 25px;
+      border-radius: 12px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+      margin-bottom: 20px;
+    }
+    h1, h2, h3 { margin-top: 0; text-align: center; }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0;
+      box-sizing: border-box;
+      border-radius: 6px;
+      border: 1px solid #333;
+      background: #2b2b2b;
+      color: #fff;
+      font-size: 16px;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      background-color: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin: 8px 0;
+      transition: opacity 0.2s;
+    }
+    button:hover { opacity: 0.9; }
+    button.secondary { background-color: #444; }
+    button.danger { background-color: var(--danger); }
+    .timer {
+      font-size: 24px;
+      font-weight: bold;
+      text-align: center;
+      color: #ff9800;
+      margin: 15px 0;
+    }
+    .badge {
+      background: #333;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      float: right;
+    }
+    ul { list-style: none; padding: 0; }
+    li {
+      background: #2b2b2b;
+      padding: 12px;
+      margin: 6px 0;
+      border-radius: 6px;
+    }
+    .hidden { display: none !important; }
+    .admin-badge {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      cursor: pointer;
+      margin-top: 15px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== USER SCREEN ==================== -->
+  <div id="user-container" class="container">
+    <h1>Candidate Poll</h1>
+    
+    <div id="state-waiting" class="hidden">
+      <p style="text-align: center; color: var(--text-muted);">Waiting for the host to open registration...</p>
+    </div>
+
+    <div id="state-registration" class="hidden">
+      <h2>Join the Ballot</h2>
+      <div class="timer">Time to join: <span id="reg-countdown">60</span>s</div>
+      <input type="text" id="nickname-input" placeholder="Enter your unique nickname">
+      <button id="btn-join-poll">Begin my ballot →</button>
+      <h3>Joined Participants:</h3>
+      <ul id="participant-list"></ul>
+    </div>
+
+    <div id="state-voting" class="hidden">
+      <h2>Round <span id="vote-round-num">1</span>: Cast Your Vote</h2>
+      <p style="color: var(--text-muted); text-align: center;">Pick one candidate. The lowest voted candidate gets eliminated each round.</p>
+      <div id="candidate-buttons"></div>
+      <p id="vote-status-msg" style="text-align: center; font-style: italic; color: #ff9800;"></p>
+    </div>
+
+    <div id="state-winner" class="hidden">
+      <h2 style="color: #4caf50;">🏆 We Have a Winner!</h2>
+      <div id="winner-display" style="font-size: 32px; font-weight: bold; text-align: center; margin: 20px 0;"></div>
+      <p style="text-align: center; color: var(--text-muted);">The final choice has been saved.</p>
+    </div>
+  </div>
+
+  <!-- ==================== ADMIN PANEL ==================== -->
+  <div id="admin-container" class="container hidden">
+    <h2>Admin Management Panel</h2>
+    
+    <div id="admin-setup">
+      <h3>Manage Candidates</h3>
+      <input type="text" id="new-candidate-input" placeholder="Enter candidate name">
+      <button class="secondary" id="btn-add-candidate">Add Candidate</button>
+      <ul id="admin-candidate-list"></ul>
+      
+      <hr style="border-color: #333; margin: 20px 0;">
+      <button id="btn-start-reg">🚀 Open Poll (Start 1-Min Timer)</button>
+    </div>
+
+    <div id="admin-live-stats" class="hidden">
+      <h3>Live Election Tally</h3>
+      <div class="timer" id="admin-timer-display"></div>
+      <ul id="admin-live-votes-list"></ul>
+    </div>
+
+    <button class="danger" style="margin-top: 20px;" id="btn-reset-poll">⚠️ Reset Poll to Default</button>
+    <button class="secondary" id="btn-close-admin">Close Admin View</button>
+  </div>
+
+  <div class="admin-badge" id="btn-admin-toggle">🔒 Admin Access</div>
+
+  <!-- ==================== FIREBASE V13 REALTIME LOGIC ==================== -->
+  <script type="module">
+    import { initializeApp } from "https://gstatic.com";
+    import { getFirestore, doc, onSnapshot, updateDoc, setDoc, getDoc } from "https://gstatic.com";
+
+    // Your confirmed credentials
+    const firebaseConfig = {
+      apiKey: "AIzaSyCBjkQllVDFjwuCBn0llkNeK6CXEiRJhhs",
+      authDomain: "://firebaseapp.com",
+      projectId: "votingbpaks",
+      storageBucket: "votingbpaks.firebasestorage.app",
+      messagingSenderId: "169723758319",
+      appId: "1:169723758319:web:e83aa0e45b04b56ecefd1a",
+      measurementId: "G-RHE64WDXQ0"
+    };
+
+    // FIXED INITIALIZATION ORDER
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const pollDocRef = doc(db, "polls", "live_election");
+
+    let localNickname = localStorage.getItem("poll_nickname") || "";
+    let systemTimerInterval = null;
+
+    function showState(stateId) {
+      ['state-waiting', 'state-registration', 'state-voting', 'state-winner'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+      });
+      document.getElementById(stateId).classList.remove('hidden');
+    }
+
+    function toggleAdminView() {
+      document.getElementById('admin-container').classList.toggle('hidden');
+    }
+
+    function initLiveSync() {
+      onSnapshot(pollDocRef, (snapshot) => {
+        if (!snapshot.exists()) {
+          resetWholePoll();
+          return;
+        }
+        const data = snapshot.data();
+        updateUIFromData(data);
+      });
+    }
+
+    function updateUIFromData(data) {
+      if (data.status === "waiting") {
+        showState("state-waiting");
+        document.getElementById("admin-setup").classList.remove("hidden");
+        document.getElementById("admin-live-stats").classList.add("hidden");
+      } 
+      else if (data.status === "registration") {
+        showState("state-registration");
+        document.getElementById("reg-countdown").innerText = data.timeRemaining;
+        document.getElementById("admin-setup").classList.add("hidden");
+        document.getElementById("admin-live-stats").classList.remove("hidden");
+        document.getElementById("admin-timer-display").innerText = `Registration Closing In: ${data.timeRemaining}s`;
+      } 
+      else if (data.status === "voting") {
+        if (data.winner) {
+          showState("state-winner");
+          document.getElementById("winner-display").innerText = data.winner;
+        } else {
+          showState("state-voting");
+          document.getElementById("vote-round-num").innerText = data.currentRound;
+          renderVotingInterface(data);
+        }
+        document.getElementById("admin-setup").classList.add("hidden");
+        document.getElementById("admin-live-stats").classList.remove("hidden");
+        document.getElementById("admin-timer-display").innerText = `Voting Active (Round ${data.currentRound})`;
+      }
+
+      document.getElementById("participant-list").innerHTML = (data.participants || []).map(p => `<li>👤 ${p}</li>`).join("");
+      document.getElementById("admin-candidate-list").innerHTML = (data.candidates || []).map(c => `
+        <li>${c.name} ${c.eliminated ? '<span class="badge" style="background:var(--danger)">Eliminated</span>' : '<span class="badge" style="background:green">Active</span>'}</li>
+      `).join("");
+
+      // Sort Live Admin View Scores from Top to Lower
+      let tallies = {};
+      (data.candidates || []).forEach(c => tallies[c.name] = 0);
+      Object.values(data.votesCollected || {}).forEach(v => { if(tallies[v] !== undefined) tallies[v]++; });
+      let sortedCandidates = [...(data.candidates || [])].sort((a,b) => (tallies[b.name] || 0) - (tallies[a.name] || 0));
+
+      document.getElementById("admin-live-votes-list").innerHTML = sortedCandidates.map(c => `
+        <li><strong>${c.name}</strong>: ${c.eliminated ? 'ELIMINATED' : (tallies[c.name] || 0) + ' votes'}</li>
+      `).join("");
+    }
+
+    async function joinPoll() {
+      const name = document.getElementById("nickname-input").value.trim();
+      if(!name) return alert("Please enter a valid nickname.");
+      
+      localNickname = name;
+      localStorage.setItem("poll_nickname", name);
+
+      try {
+        const docSnap = await getDoc(pollDocRef);
+        let participants = docSnap.data().participants || [];
+        if(!participants.includes(name)) {
+          participants.push(name);
+          await updateDoc(pollDocRef, { participants: participants });
+        }
+      } catch (err) {
+        console.error("Error joining poll:", err);
+      }
+    }
+
+    function renderVotingInterface(data) {
+      const container = document.getElementById("candidate-buttons");
+      const statusMsg = document.getElementById("vote-status-msg");
+      container.innerHTML = "";
+
+      if (!localNickname || !(data.participants || []).includes(localNickname)) {
+        statusMsg.innerText = "Viewing mode active. You are not a registered participant.";
+        return;
+      }
+
+if (data.votesCollected && data.votesCollected[localNickname]) {
+statusMsg.innerText = Vote registered! Waiting for others... (${Object.keys(data.votesCollected).length}/${data.participants.length});
+return;
+}
+statusMsg.innerText = "";
+(data.candidates || []).filter(c => !c.eliminated).forEach(c => {
+const btn = document.createElement("button");
+btn.innerText = c.name;
+btn.onclick = () => submitVote(c.name);
+container.appendChild(btn);
+});
+}
+async function submitVote(candidateName) {
+const updateObj = {};
+updateObj[votesCollected.${localNickname}] = candidateName;
+try {
+await updateDoc(pollDocRef, updateObj);
+evaluateRoundEndLogic();
+} catch (err) {
+console.error("Error submitting vote:", err);
+}
+}
+async function evaluateRoundEndLogic() {
+const docSnap = await getDoc(pollDocRef);
+const data = docSnap.data();
+if (data.status !== "voting" || data.winner) return;
+const votesMap = data.votesCollected || {};
+if (Object.keys(votesMap).length >= (data.participants || []).length && data.participants.length > 0) {
+tallyAndEliminate(data, votesMap);
+}
+}
+async function tallyAndEliminate(data, votesMap) {
+let candidates = [...data.candidates];
+let active = candidates.filter(c => !c.eliminated);
+let scores = {};
+active.forEach(c => scores[c.name] = 0);
+Object.values(votesMap).forEach(selection => { if(scores[selection] !== undefined) scores[selection]++; });
+active.sort((a,b) => scores[a.name] - scores[b.name]);
+if(active.length <= 1) {
+await updateDoc(pollDocRef, { winner: active[0].name });
+return;
+}
+let lowestCandidateName = active[0].name;
+candidates.forEach(c => { if(c.name === lowestCandidateName) c.eliminated = true; });
+let remainingSurvivors = candidates.filter(c => !c.eliminated);
+if (remainingSurvivors.length === 1) {
+await updateDoc(pollDocRef, { candidates: candidates, winner: remainingSurvivors[0].name, votesCollected: {} });
+} else {
+await updateDoc(pollDocRef, { candidates: candidates, currentRound: data.currentRound + 1, votesCollected: {} });
+}
+}
+async function addCandidate() {
+const input = document.getElementById("new-candidate-input");
+const name = input.value.trim();
+if(!name) return;
+try {
+const docSnap = await getDoc(pollDocRef);
+let candidates = docSnap.data().candidates || [];
+candidates.push({ name: name, eliminated: false });
+await updateDoc(pollDocRef, { candidates: candidates });
+input.value = "";
+} catch (err) {
+console.error("Error adding candidate:", err);
+}
+}
+async function startRegistrationPeriod() {
+try {
+const docSnap = await getDoc(pollDocRef);
+const candidates = docSnap.data().candidates || [];
+if(candidates.length < 2) return alert("Please add at least 2 candidates first.");
+await updateDoc(pollDocRef, {
+status: "registration",
+timeRemaining: 60,
+participants: [],
+votesCollected: {},
+currentRound: 1,
+winner: ""
+});
+if(systemTimerInterval) clearInterval(systemTimerInterval);
+systemTimerInterval = setInterval(async () => {
+const dSnap = await getDoc(pollDocRef);
+let currentSec = dSnap.data().timeRemaining - 1;
+if(currentSec <= 0) {
+clearInterval(systemTimerInterval);
+await updateDoc(pollDocRef, { status: "voting", timeRemaining: 0 });
+} else {
+await updateDoc(pollDocRef, { timeRemaining: currentSec });
+}
+}, 1000);
+} catch (err) {
+console.error("Error starting registration:", err);
+}
+}
+async function resetWholePoll() {
+if(systemTimerInterval) clearInterval(systemTimerInterval);
+try {
+await setDoc(pollDocRef, {
+status: "waiting",
+timeRemaining: 0,
+currentRound: 1,
+participants: [],
+candidates: [],
+votesCollected: {},
+winner: ""
+});
+} catch (err) {
+console.error("Error resetting poll:", err);
+}
+}
+// Event listener attachments
+document.getElementById("btn-join-poll").onclick = joinPoll;
+document.getElementById("btn-add-candidate").onclick = addCandidate;
+document.getElementById("btn-start-reg").onclick = startRegistrationPeriod;
+document.getElementById("btn-reset-poll").onclick = resetWholePoll;
+document.getElementById("btn-admin-toggle").onclick = toggleAdminView;
+document.getElementById("btn-close-admin").onclick = toggleAdminView;
+initLiveSync();
